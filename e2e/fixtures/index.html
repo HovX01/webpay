@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>webpay-package E2E</title>
+  </head>
+  <body>
+    <main>
+      <h1>webpay-package browser smoke test</h1>
+      <p data-testid="status">loading</p>
+    </main>
+    <script type="module">
+      import { createWebPayClient } from "/dist/index.js";
+
+      const status = document.querySelector('[data-testid="status"]');
+      const client = createWebPayClient();
+      status.textContent = client.ping();
+    </script>
+  </body>
+</html>

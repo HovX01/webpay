@@ -1,0 +1,10 @@
+{
+  "tasks": {
+    "test": "deno test --allow-none deno/smoke_test.ts"
+  },
+  "fmt": {
+    "semiColons": true,
+    "singleQuote": false,
+    "lineWidth": 100
+  }
+}
