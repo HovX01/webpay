@@ -1,5 +1,5 @@
 {
-  "name": "webpay",
+  "name": "@bunhov_leom/webpay",
   "version": "0.1.0",
   "description": "Cross-runtime Webpay package scaffold for Node, Bun, and Deno.",
   "type": "module",
