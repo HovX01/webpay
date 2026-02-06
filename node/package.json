@@ -35,6 +35,7 @@
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:sandbox-sign": "npm run build && node scripts/sandbox-sign-check.mjs",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:bun": "bun test bun/smoke.test.ts",

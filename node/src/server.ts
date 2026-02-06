@@ -91,6 +91,11 @@ export interface WebPayServerClientOptions {
 }
 
 export type GatewayPayload = Record<string, unknown>;
+export type WebPayServerClientInput = Partial<WebPayServerClientOptions>;
+
+export type WebPayServerClientFactory = ((options?: WebPayServerClientInput) => WebPayServerClient) & {
+  default: (options?: WebPayServerClientInput) => WebPayServerClient;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -114,6 +119,76 @@ function resolveFetch(fetchImpl?: FetchLike): FetchLike {
     throw new Error("No fetch implementation found. Pass options.fetch in server environments without global fetch.");
   }
   return globalThis.fetch as unknown as FetchLike;
+}
+
+function getEnvValue(name: string): string | undefined {
+  const value = process.env[name];
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return trimmed;
+}
+
+function normalizeSignType(signType: string | undefined): SignType | undefined {
+  if (!signType) {
+    return undefined;
+  }
+
+  const normalized = signType.trim().toUpperCase();
+  if (normalized === "MD5" || normalized === "HMAC-SHA256") {
+    return normalized;
+  }
+
+  return undefined;
+}
+
+function resolveCredentialsFromEnv(): WebPayOAuthPasswordCredentials | undefined {
+  const clientId = getEnvValue("WEBPAY_CLIENT_ID");
+  const clientSecret = getEnvValue("WEBPAY_CLIENT_SECRET");
+  const username = getEnvValue("WEBPAY_USERNAME");
+  const password = getEnvValue("WEBPAY_PASSWORD");
+
+  if (!clientId && !clientSecret && !username && !password) {
+    return undefined;
+  }
+
+  if (!clientId || !clientSecret || !username || !password) {
+    throw new Error(
+      "Incomplete WEBPAY OAuth credentials. Set WEBPAY_CLIENT_ID, WEBPAY_CLIENT_SECRET, WEBPAY_USERNAME, WEBPAY_PASSWORD."
+    );
+  }
+
+  return {
+    clientId,
+    clientSecret,
+    username,
+    password
+  };
+}
+
+function resolveServerClientOptions(options: WebPayServerClientInput = {}): WebPayServerClientOptions {
+  const apiSecretKey = options.apiSecretKey ?? getEnvValue("WEBPAY_API_SECRET_KEY");
+  if (!apiSecretKey) {
+    throw new Error("Missing WebPay API secret key. Provide options.apiSecretKey or set WEBPAY_API_SECRET_KEY.");
+  }
+
+  const signType = options.signType ?? normalizeSignType(getEnvValue("WEBPAY_SIGN_TYPE")) ?? "MD5";
+
+  return {
+    apiSecretKey,
+    baseUrl: options.baseUrl ?? getEnvValue("WEBPAY_BASE_URL"),
+    signType,
+    accessToken: options.accessToken ?? getEnvValue("WEBPAY_ACCESS_TOKEN"),
+    sellerCode: options.sellerCode ?? getEnvValue("WEBPAY_SELLER_CODE"),
+    credentials: options.credentials ?? resolveCredentialsFromEnv(),
+    fetch: options.fetch
+  };
 }
 
 function isSignable(value: unknown): boolean {
@@ -141,8 +216,15 @@ export function toUrlParams(values: Record<string, unknown>): string {
 }
 
 export function makeSignature(values: Record<string, unknown>, apiSecretKey: string): string {
-  const signType = values.sign_type === "HMAC-SHA256" ? "HMAC-SHA256" : "MD5";
-  const base = `${toUrlParams(values)}&key=${apiSecretKey}`;
+  const signType = normalizeSignType(typeof values.sign_type === "string" ? values.sign_type : undefined) ?? "MD5";
+  const valuesForSigning =
+    typeof values.sign_type === "string" && values.sign_type !== signType
+      ? {
+          ...values,
+          sign_type: signType
+        }
+      : values;
+  const base = `${toUrlParams(valuesForSigning)}&key=${apiSecretKey}`;
 
   if (signType === "HMAC-SHA256") {
     return createHmac("sha256", apiSecretKey).update(base).digest("hex");
@@ -244,6 +326,8 @@ export class WebPayServerClient {
 
     if (!requestPayload.sign_type) {
       requestPayload.sign_type = this.signType;
+    } else if (typeof requestPayload.sign_type === "string") {
+      requestPayload.sign_type = normalizeSignType(requestPayload.sign_type) ?? this.signType;
     }
 
     if (!requestPayload.sign) {
@@ -371,6 +455,13 @@ async function parseJsonResponse(response: FetchResponseLike): Promise<unknown> 
   }
 }
 
-export function createWebPayServerClient(options: WebPayServerClientOptions): WebPayServerClient {
-  return new WebPayServerClient(options);
+function createResolvedWebPayServerClient(options: WebPayServerClientInput = {}): WebPayServerClient {
+  return new WebPayServerClient(resolveServerClientOptions(options));
 }
+
+export const createWebPayServerClient: WebPayServerClientFactory = Object.assign(
+  (options: WebPayServerClientInput = {}) => createResolvedWebPayServerClient(options),
+  {
+    default: (options: WebPayServerClientInput = {}) => createResolvedWebPayServerClient(options)
+  }
+);

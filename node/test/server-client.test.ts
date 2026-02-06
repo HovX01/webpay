@@ -15,7 +15,69 @@ function mockJsonResponse(payload: unknown, status = 200) {
   };
 }
 
+const WEBPAY_ENV_KEYS = [
+  "WEBPAY_API_SECRET_KEY",
+  "WEBPAY_ACCESS_TOKEN",
+  "WEBPAY_SELLER_CODE",
+  "WEBPAY_BASE_URL",
+  "WEBPAY_SIGN_TYPE",
+  "WEBPAY_CLIENT_ID",
+  "WEBPAY_CLIENT_SECRET",
+  "WEBPAY_USERNAME",
+  "WEBPAY_PASSWORD"
+] as const;
+
+type WebPayEnvKey = (typeof WEBPAY_ENV_KEYS)[number];
+
+function withWebPayEnv(overrides: Partial<Record<WebPayEnvKey, string | undefined>>) {
+  const keys = Object.keys(overrides) as WebPayEnvKey[];
+  const previous: Partial<Record<WebPayEnvKey, string | undefined>> = {};
+
+  for (const key of keys) {
+    previous[key] = process.env[key];
+    const next = overrides[key];
+    if (typeof next === "string") {
+      process.env[key] = next;
+    } else {
+      delete process.env[key];
+    }
+  }
+
+  return () => {
+    for (const key of keys) {
+      const value = previous[key];
+      if (typeof value === "string") {
+        process.env[key] = value;
+      } else {
+        delete process.env[key];
+      }
+    }
+  };
+}
+
 describe("WebPay signature", () => {
+  it("normalizes lowercase MD5 sign_type", () => {
+    const params = {
+      service: "webpay.acquire.queryOrder",
+      sign_type: "md5",
+      seller_code: "SELLER",
+      out_trade_no: "ORDER-1"
+    };
+
+    expect(makeSignature(params, "abc123")).toBe("cfe72b9f39febd2fd45b82bb31e6452e");
+  });
+
+  it("normalizes lowercase HMAC-SHA256 sign_type", () => {
+    const params = {
+      service: "webpay.acquire.queryOrder",
+      sign_type: "hmac-sha256",
+      seller_code: "SELLER",
+      out_trade_no: "ORDER-1"
+    };
+
+    expect(makeSignature(params, "abc123")).toBe("3577bc4baa1eb1a11e94fc22db2b12f7dbe420a80c121d9b6a1a81b391c79788");
+  });
+
   it("creates MD5 signature using the documented algorithm", () => {
     const params = {
       service: "webpay.acquire.queryOrder",
@@ -123,5 +185,68 @@ describe("WebPay server client", () => {
     const [, gatewayOptions] = fetchMock.mock.calls[1] as [string, Record<string, unknown>];
     const headers = gatewayOptions.headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer AUTO-TOKEN");
+  });
+
+  it("creates client from WEBPAY_* env vars when options are omitted", async () => {
+    const restore = withWebPayEnv({
+      WEBPAY_API_SECRET_KEY: "env-secret",
+      WEBPAY_ACCESS_TOKEN: "ENV-TOKEN",
+      WEBPAY_SELLER_CODE: "ENV-SELLER"
+    });
+
+    try {
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockJsonResponse({
+          success: true,
+          data: { ok: true }
+        })
+      );
+
+      const client = createWebPayServerClient({ fetch: fetchMock });
+      await client.queryOrder({ out_trade_no: "ORDER-ENV" });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [, options] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
+      const headers = options.headers as Record<string, string>;
+      expect(headers.Authorization).toBe("Bearer ENV-TOKEN");
+
+      const body = JSON.parse(options.body as string) as Record<string, unknown>;
+      expect(body.seller_code).toBe("ENV-SELLER");
+    } finally {
+      restore();
+    }
+  });
+
+  it("supports createWebPayServerClient.default() alias", () => {
+    const restore = withWebPayEnv({
+      WEBPAY_API_SECRET_KEY: "env-secret",
+      WEBPAY_ACCESS_TOKEN: "ENV-TOKEN"
+    });
+
+    try {
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockJsonResponse({
+          success: true,
+          data: { ok: true }
+        })
+      );
+
+      const client = createWebPayServerClient.default({ fetch: fetchMock });
+      expect(client).toBeInstanceOf(WebPayServerClient);
+    } finally {
+      restore();
+    }
+  });
+
+  it("throws helpful error when API secret key is missing", () => {
+    const restore = withWebPayEnv({
+      WEBPAY_API_SECRET_KEY: undefined
+    });
+
+    try {
+      expect(() => createWebPayServerClient({ fetch: vi.fn() })).toThrow("WEBPAY_API_SECRET_KEY");
+    } finally {
+      restore();
+    }
   });
 });

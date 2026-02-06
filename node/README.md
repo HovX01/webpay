@@ -1,75 +1,106 @@
-# webpay
+# webpay (Node Package)
 
-TypeScript package for WebPay integration with server-side API requests.
+This `node/` directory is the npm package for WebPay client integration.
+It ships a lightweight base client plus a server-side client for OAuth and
+signed gateway requests.
 
-## What is included
+## Scope
 
-- ESM + CJS build output via `tsup`
-- Type declarations (`.d.ts`)
-- Runtime-neutral entrypoint in `src/index.ts`
-- Server-side client in `src/server.ts` for OAuth + signed gateway requests
-- Smoke tests for Node (`vitest`), Bun, and Deno
-- Browser E2E test with Playwright
+- Package name: `webpay`
+- Runtime target: Node.js (primary), with smoke coverage for Bun and Deno
+- Output: ESM + CJS + type declarations
+- Exports:
+  - `webpay` -> base client (`src/index.ts`)
+  - `webpay/server` -> server client (`src/server.ts`)
 
-## Install dependencies
+## Requirements
+
+- Node.js `>=18`
+- npm
+
+## Install
 
 ```bash
 npm install
 ```
 
-## Build
+## Build and Quality Checks
 
 ```bash
 npm run build
-```
-
-## Test
-
-```bash
+npm run typecheck
 npm test
 ```
 
-```bash
-npm run test:bun
-```
+Extra runtime checks:
 
 ```bash
+npm run test:bun
 npm run test:deno
 ```
 
+Sandbox sign check (uses `../credenail.txt` and `../sandbox-public.key` by default):
+
 ```bash
-npm run test:e2e
+npm run test:sandbox-sign
 ```
 
-## Playwright setup
-
-Install Chromium once before running E2E:
+Browser E2E:
 
 ```bash
 npx playwright install chromium
+npm run test:e2e
 ```
+
+## Project Layout
+
+- `src/index.ts`: Base `WebPayClient` (`ping()` smoke API)
+- `src/server.ts`: `WebPayServerClient` for OAuth, signing, gateway calls
+- `test/`: Vitest tests for signatures and server client behavior
+- `bun/`, `deno/`: Cross-runtime smoke tests
+- `e2e/`: Playwright browser smoke test and fixture page
+- `scripts/e2e-server.mjs`: Static server used by Playwright
+
+## Environment Variables (Server Client)
+
+- Required:
+  - `WEBPAY_API_SECRET_KEY`
+- Optional:
+  - `WEBPAY_BASE_URL` (default: `https://devwebpayment.kesspay.io`)
+  - `WEBPAY_SELLER_CODE`
+  - `WEBPAY_ACCESS_TOKEN`
+  - `WEBPAY_SIGN_TYPE` (`MD5` or `HMAC-SHA256`)
+- Optional for password OAuth auto-auth:
+  - `WEBPAY_CLIENT_ID`
+  - `WEBPAY_CLIENT_SECRET`
+  - `WEBPAY_USERNAME`
+  - `WEBPAY_PASSWORD`
+
+Note: request signing (`MD5` and `HMAC-SHA256`) uses `api_secret_key`.
+The sandbox public key is for RSA encryption helpers (`encryptToHex`, `encryptObjectToHex`).
 
 ## Usage
 
-### Basic package import
+### Base client
 
 ```ts
 import { createWebPayClient } from "webpay";
 
 const client = createWebPayClient();
-console.log(client.ping());
+console.log(client.ping()); // webpay:ok
 ```
 
-### Deno (via npm specifier)
+### Server client (env-driven)
 
 ```ts
-import { createWebPayClient } from "npm:webpay";
+import { createWebPayServerClient } from "webpay/server";
 
-const client = createWebPayClient();
-console.log(client.ping());
+const client = createWebPayServerClient();
+const result = await client.queryOrder({ out_trade_no: "ORDER-1001" });
+console.log(result);
 ```
 
-### Server-side WebPay API client (Node/Bun server)
+### Server client (explicit config)
 
 ```ts
 import { createWebPayServerClient } from "webpay/server";
@@ -77,23 +108,33 @@ import { createWebPayServerClient } from "webpay/server";
 const client = createWebPayServerClient({
   baseUrl: "https://devwebpayment.kesspay.io",
   apiSecretKey: process.env.WEBPAY_API_SECRET_KEY!,
-  sellerCode: process.env.WEBPAY_SELLER_CODE!,
-  credentials: {
-    clientId: process.env.WEBPAY_CLIENT_ID!,
-    clientSecret: process.env.WEBPAY_CLIENT_SECRET!,
-    username: process.env.WEBPAY_USERNAME!,
-    password: process.env.WEBPAY_PASSWORD!
-  }
-});
-
-const paymentLink = await client.generatePaymentLink({
-  out_trade_no: "ORDER-1001",
-  body: "Order #1001",
-  total_amount: 10,
-  currency: "USD",
-  notify_url: "https://merchant.example.com/webpay/notify",
-  redirect_url: "https://merchant.example.com/checkout/result"
+  signType: "MD5",
+  accessToken: process.env.WEBPAY_ACCESS_TOKEN,
+  sellerCode: process.env.WEBPAY_SELLER_CODE
 });
 ```
 
-Reference docs: `https://devwebpayment.kesspay.io/docs#introduction`
+### Signature helpers
+
+```ts
+import { makeSignature, verifySignature } from "webpay/server";
+
+const payload = {
+  service: "webpay.acquire.queryOrder",
+  sign_type: "MD5",
+  out_trade_no: "ORDER-1001"
+};
+
+const sign = makeSignature(payload, process.env.WEBPAY_API_SECRET_KEY!);
+const valid = verifySignature({ ...payload, sign }, process.env.WEBPAY_API_SECRET_KEY!);
+console.log(valid);
+```
+
+## Error Types
+
+- `WebPayHttpError`: non-2xx HTTP responses
+- `WebPayApiError`: gateway response with `success: false`
+
+## Self Spec Driving
+
+Agent workflow for this package is documented in `AGENT.md`.
