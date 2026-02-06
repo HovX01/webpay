@@ -11,7 +11,7 @@ export class WebPayClient {
   }
 
   ping(): string {
-    return "webpay-package:ok";
+    return "webpay:ok";
   }
 }
 

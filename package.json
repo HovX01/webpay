@@ -1,7 +1,7 @@
 {
-  "name": "webpay-package",
+  "name": "webpay",
   "version": "0.1.0",
-  "description": "Cross-runtime WebPay package scaffold for Node, Bun, and Deno.",
+  "description": "Cross-runtime Webpay package scaffold for Node, Bun, and Deno.",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.cjs",

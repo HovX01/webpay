@@ -1,4 +1,4 @@
-# webpay-package
+# webpay
 
 Cross-runtime TypeScript package scaffold that targets Node.js, Bun, and Deno.
 
@@ -53,7 +53,7 @@ npx playwright install chromium
 ### Node.js / Bun (npm package)
 
 ```ts
-import { createWebPayClient } from "webpay-package";
+import { createWebPayClient } from "webpay";
 
 const client = createWebPayClient();
 console.log(client.ping());
@@ -62,7 +62,7 @@ console.log(client.ping());
 ### Deno (via npm specifier)
 
 ```ts
-import { createWebPayClient } from "npm:webpay-package";
+import { createWebPayClient } from "npm:webpay";
 
 const client = createWebPayClient();
 console.log(client.ping());
