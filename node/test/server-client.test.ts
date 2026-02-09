@@ -1,4 +1,7 @@
 import { constants, generateKeyPairSync, privateDecrypt } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -28,7 +31,9 @@ const WEBPAY_ENV_KEYS = [
   "WEBPAY_CLIENT_ID",
   "WEBPAY_CLIENT_SECRET",
   "WEBPAY_USERNAME",
-  "WEBPAY_PASSWORD"
+  "WEBPAY_PASSWORD",
+  "WEBPAY_PUBLIC_KEY_PEM",
+  "WEBPAY_PUBLIC_KEY_FILE"
 ] as const;
 
 type WebPayEnvKey = (typeof WEBPAY_ENV_KEYS)[number];
@@ -677,5 +682,67 @@ describe("WebPay server client", () => {
     } finally {
       restore();
     }
+  });
+
+  it("loads WEBPAY_PUBLIC_KEY_FILE and encrypts direct pay card from client helper", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "webpay-public-key-"));
+    try {
+      const { publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+      const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+      const publicKeyPath = join(tempDir, "sandbox-public.key");
+      writeFileSync(publicKeyPath, publicKeyPem, "utf8");
+
+      const restore = withWebPayEnv({
+        WEBPAY_API_SECRET_KEY: "env-secret",
+        WEBPAY_CLIENT_ID: "ENV-CID",
+        WEBPAY_CLIENT_SECRET: "ENV-CSECRET",
+        WEBPAY_USERNAME: "env.user@example.com",
+        WEBPAY_PASSWORD: "env-pass",
+        WEBPAY_PUBLIC_KEY_FILE: publicKeyPath
+      });
+
+      try {
+        const client = createWebPayServerClient({ fetch: vi.fn() });
+        const encryptedHex = client.encryptDirectPayCard({
+          number: "5473500160001018",
+          securityCode: "123",
+          expiry: {
+            month: "12",
+            year: "35"
+          }
+        });
+
+        expect(encryptedHex).toMatch(/^[0-9a-f]+$/);
+        expect(encryptedHex.length).toBeGreaterThan(0);
+      } finally {
+        restore();
+      }
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("throws helpful error when client encrypt helper has no public key configured", () => {
+    const client = createWebPayServerClient({
+      apiSecretKey: "my-secret",
+      credentials: {
+        clientId: "CID",
+        clientSecret: "CSECRET",
+        username: "user@example.com",
+        password: "pass123"
+      },
+      fetch: vi.fn()
+    });
+
+    expect(() =>
+      client.encryptDirectPayCard({
+        number: "5473500160001018",
+        securityCode: "123",
+        expiry: {
+          month: "12",
+          year: "35"
+        }
+      })
+    ).toThrow("Missing WebPay RSA public key");
   });
 });

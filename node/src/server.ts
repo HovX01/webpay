@@ -1,4 +1,5 @@
 import { constants, createHash, createHmac, publicEncrypt } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import type {
   GatewayPayload,
@@ -178,6 +179,33 @@ function resolveCredentialsFromEnv(): WebPayOAuthPasswordCredentials | undefined
   };
 }
 
+function resolvePublicKeyPem(options: WebPayServerClientInput): string | undefined {
+  if (options.publicKeyPem) {
+    return options.publicKeyPem;
+  }
+
+  const envPublicKeyPem = getEnvValue("WEBPAY_PUBLIC_KEY_PEM");
+  if (envPublicKeyPem) {
+    return envPublicKeyPem;
+  }
+
+  const publicKeyFile = options.publicKeyFile ?? getEnvValue("WEBPAY_PUBLIC_KEY_FILE");
+  if (!publicKeyFile) {
+    return undefined;
+  }
+
+  try {
+    const content = readFileSync(publicKeyFile, "utf8").trim();
+    if (!content) {
+      throw new Error(`Public key file is empty: ${publicKeyFile}`);
+    }
+    return content;
+  } catch (error) {
+    const reason = toErrorMessage(error);
+    throw new Error(`Failed to load WebPay public key file "${publicKeyFile}". ${reason}`);
+  }
+}
+
 function resolveServerClientOptions(options: WebPayServerClientInput = {}): WebPayServerClientOptions {
   const apiSecretKey = options.apiSecretKey ?? getEnvValue("WEBPAY_API_SECRET_KEY");
   if (!apiSecretKey) {
@@ -197,6 +225,7 @@ function resolveServerClientOptions(options: WebPayServerClientInput = {}): WebP
     baseUrl: options.baseUrl ?? getEnvValue("WEBPAY_BASE_URL"),
     signType,
     sellerCode: options.sellerCode ?? getEnvValue("WEBPAY_SELLER_CODE"),
+    publicKeyPem: resolvePublicKeyPem(options),
     credentials,
     fetch: options.fetch
   };
@@ -368,6 +397,7 @@ export class WebPayServerClient {
   private readonly apiSecretKey: string;
   private readonly signType: SignType;
   private readonly defaultSellerCode?: string;
+  private readonly publicKeyPem?: string;
   private readonly credentials: WebPayOAuthPasswordCredentials;
   private accessToken?: string;
 
@@ -379,7 +409,18 @@ export class WebPayServerClient {
     this.apiSecretKey = options.apiSecretKey;
     this.signType = options.signType ?? "MD5";
     this.defaultSellerCode = options.sellerCode;
+    this.publicKeyPem = options.publicKeyPem;
     this.credentials = options.credentials;
+  }
+
+  encryptDirectPayCard(card: WebPayDirectPayCardPayload, publicKeyPem?: string): string {
+    const key = publicKeyPem ?? this.publicKeyPem;
+    if (!key) {
+      throw new Error(
+        "Missing WebPay RSA public key. Provide method argument publicKeyPem, options.publicKeyPem/publicKeyFile, or set WEBPAY_PUBLIC_KEY_PEM/WEBPAY_PUBLIC_KEY_FILE."
+      );
+    }
+    return encryptDirectPayCardToHex(card, key);
   }
 
   async authenticateWithPassword(credentials?: WebPayOAuthPasswordCredentials): Promise<WebPayOAuthTokenResponse> {

@@ -74,6 +74,8 @@ npm run test:e2e
   - `WEBPAY_BASE_URL` (default: `https://devwebpayment.kesspay.io`)
   - `WEBPAY_SELLER_CODE`
   - `WEBPAY_SIGN_TYPE` (`MD5` or `HMAC-SHA256`)
+  - `WEBPAY_PUBLIC_KEY_FILE` (path to `sandbox-public.key` or another RSA public key PEM file)
+  - `WEBPAY_PUBLIC_KEY_PEM` (raw RSA public key PEM text; takes priority over `WEBPAY_PUBLIC_KEY_FILE`)
 
 Note: request signing (`MD5` and `HMAC-SHA256`) uses `api_secret_key`.
 The sandbox public key is for RSA encryption helpers (`encryptToHex`, `encryptObjectToHex`).
@@ -110,6 +112,7 @@ const client = createWebPayServerClient({
   baseUrl: "https://devwebpayment.kesspay.io",
   apiSecretKey: process.env.WEBPAY_API_SECRET_KEY!,
   signType: "MD5",
+  publicKeyFile: process.env.WEBPAY_PUBLIC_KEY_FILE,
   credentials: {
     clientId: process.env.WEBPAY_CLIENT_ID!,
     clientSecret: process.env.WEBPAY_CLIENT_SECRET!,
@@ -138,15 +141,11 @@ console.log(valid);
 
 ### DirectPay card encryption helper
 
-Use the documented card shape (`number`, `securityCode`, `expiry.month`, `expiry.year`) and encrypt it to hex:
+Use the documented card shape (`number`, `securityCode`, `expiry.month`, `expiry.year`) and encrypt it to hex.
+If your client is configured with `publicKeyFile`/`publicKeyPem` (or `WEBPAY_PUBLIC_KEY_FILE`/`WEBPAY_PUBLIC_KEY_PEM`), use `client.encryptDirectPayCard(...)`:
 
 ```ts
-import { encryptDirectPayCardToHex } from "webpay/server";
-import fs from "node:fs";
-
-const publicKeyPem = fs.readFileSync("./sandbox-public.key", "utf8");
-
-const card = encryptDirectPayCardToHex(
+const card = client.encryptDirectPayCard(
   {
     number: "5473500160001018",
     securityCode: "123",
@@ -154,8 +153,7 @@ const card = encryptDirectPayCardToHex(
       month: "12",
       year: "35"
     }
-  },
-  publicKeyPem
+  }
 );
 
 await client.directPay({
@@ -168,6 +166,8 @@ await client.directPay({
   ip_address: "203.0.113.10"
 });
 ```
+
+You can also keep using `encryptDirectPayCardToHex(cardPayload, publicKeyPem)` directly when needed.
 
 ## Error Types
 
