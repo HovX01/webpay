@@ -502,9 +502,7 @@ export class WebPayServerClient {
       requestPayload.sign_type = normalizeSignType(requestPayload.sign_type) ?? this.signType;
     }
 
-    if (!requestPayload.sign) {
-      requestPayload.sign = makeSignature(requestPayload, this.apiSecretKey);
-    }
+    requestPayload.sign = makeSignature(requestPayload, this.apiSecretKey);
 
     const response = await this.postGatewayWithAuthRetry<TData>(requestPayload, accessToken);
 

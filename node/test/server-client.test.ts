@@ -254,6 +254,44 @@ describe("WebPay server client", () => {
     expect(body.sign).toBe(makeSignature(body, "my-secret"));
   });
 
+  it("overrides incoming payload sign with computed signature", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          token_type: "Bearer",
+          expires_in: 1800,
+          access_token: "AUTO-TOKEN",
+          refresh_token: "REFRESH-TOKEN"
+        })
+      )
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          success: true,
+          data: { token: "order-token" }
+        })
+      );
+
+    const client = createWebPayServerClient({
+      apiSecretKey: "my-secret",
+      sellerCode: "SELLER-CODE",
+      credentials: {
+        clientId: "CID",
+        clientSecret: "CSECRET",
+        username: "user@example.com",
+        password: "pass123"
+      },
+      fetch: fetchMock
+    });
+
+    await client.queryOrder({ out_trade_no: "ORDER-1", sign: "WRONG-SIGN" });
+
+    const [, options] = fetchMock.mock.calls[1] as [string, Record<string, unknown>];
+    const body = JSON.parse(options.body as string) as Record<string, unknown>;
+    expect(body.sign).not.toBe("WRONG-SIGN");
+    expect(body.sign).toBe(makeSignature(body, "my-secret"));
+  });
+
   it("authenticates with password flow and uses bearer token", async () => {
     const fetchMock = vi
       .fn()
