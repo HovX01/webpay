@@ -451,6 +451,7 @@ export interface WebPayApiResponse<TData = unknown> {
 export interface WebPayHttpErrorOptions {
   status: number;
   details: unknown;
+  cause?: unknown;
 }
 
 export interface WebPayServerClientOptions {

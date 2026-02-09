@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   WEBPAY_SERVICES,
+  WebPayApiError,
+  WebPayHttpError,
   WebPayServerClient,
   createWebPayServerClient,
   makeSignature,
@@ -185,6 +187,173 @@ describe("WebPay server client", () => {
     const [, gatewayOptions] = fetchMock.mock.calls[1] as [string, Record<string, unknown>];
     const headers = gatewayOptions.headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer AUTO-TOKEN");
+  });
+
+  it("re-authenticates and retries once when gateway responds with 401", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockJsonResponse(
+          {
+            message: "Unauthorized"
+          },
+          401
+        )
+      )
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          token_type: "Bearer",
+          expires_in: 1800,
+          access_token: "NEW-TOKEN",
+          refresh_token: "REFRESH-TOKEN"
+        })
+      )
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          success: true,
+          data: { ok: true }
+        })
+      );
+
+    const client = new WebPayServerClient({
+      apiSecretKey: "my-secret",
+      accessToken: "STALE-TOKEN",
+      sellerCode: "SELLER-CODE",
+      credentials: {
+        clientId: "CID",
+        clientSecret: "CSECRET",
+        username: "user@example.com",
+        password: "pass123"
+      },
+      fetch: fetchMock
+    });
+
+    const result = await client.queryOrder({ out_trade_no: "ORDER-1" });
+    expect(result.success).toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const [firstUrl, firstOptions] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
+    const [authUrl] = fetchMock.mock.calls[1] as [string, Record<string, unknown>];
+    const [secondGatewayUrl, secondGatewayOptions] = fetchMock.mock.calls[2] as [string, Record<string, unknown>];
+
+    expect(firstUrl).toBe("https://devwebpayment.kesspay.io/api/mch/v2/gateway");
+    expect(authUrl).toBe("https://devwebpayment.kesspay.io/oauth/token");
+    expect(secondGatewayUrl).toBe("https://devwebpayment.kesspay.io/api/mch/v2/gateway");
+
+    const firstHeaders = firstOptions.headers as Record<string, string>;
+    const secondHeaders = secondGatewayOptions.headers as Record<string, string>;
+    expect(firstHeaders.Authorization).toBe("Bearer STALE-TOKEN");
+    expect(secondHeaders.Authorization).toBe("Bearer NEW-TOKEN");
+  });
+
+  it("throws actionable message for 401 when credentials are not configured", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse(
+        {
+          message: "Unauthorized"
+        },
+        401
+      )
+    );
+
+    const client = createWebPayServerClient({
+      apiSecretKey: "my-secret",
+      accessToken: "STALE-TOKEN",
+      fetch: fetchMock
+    });
+
+    await expect(client.queryOrder({ out_trade_no: "ORDER-1" })).rejects.toMatchObject({
+      name: "WebPayHttpError",
+      status: 401,
+      message: expect.stringContaining("Access token is likely invalid or expired.")
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("includes gateway error response payload on WebPayApiError", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({
+        success: false,
+        code: "INVALID_SIGN",
+        message: "Invalid signature.",
+        data: {
+          request_id: "REQ-1"
+        }
+      })
+    );
+
+    const client = createWebPayServerClient({
+      apiSecretKey: "my-secret",
+      accessToken: "ACCESS-TOKEN",
+      fetch: fetchMock
+    });
+
+    try {
+      await client.queryOrder({ out_trade_no: "ORDER-1" });
+      throw new Error("Expected queryOrder() to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(WebPayApiError);
+      const apiError = error as WebPayApiError;
+      expect(apiError.message).toContain("Invalid signature.");
+      expect(apiError.code).toBe("INVALID_SIGN");
+      expect(apiError.details).toEqual({ request_id: "REQ-1" });
+      expect(apiError.response).toMatchObject({
+        success: false,
+        code: "INVALID_SIGN"
+      });
+    }
+  });
+
+  it("includes http error response payload on WebPayHttpError", async () => {
+    const httpPayload = {
+      message: "Unauthorized",
+      code: "AUTH_FAILED"
+    };
+    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse(httpPayload, 401));
+
+    const client = createWebPayServerClient({
+      apiSecretKey: "my-secret",
+      accessToken: "ACCESS-TOKEN",
+      fetch: fetchMock
+    });
+
+    try {
+      await client.queryOrder({ out_trade_no: "ORDER-1" });
+      throw new Error("Expected queryOrder() to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(WebPayHttpError);
+      const httpError = error as WebPayHttpError;
+      expect(httpError.status).toBe(401);
+      expect(httpError.message).toContain("Unauthorized");
+      expect(httpError.details).toEqual(httpPayload);
+      expect(httpError.response).toEqual(httpPayload);
+    }
+  });
+
+  it("wraps network errors with status 0 and preserves cause", async () => {
+    const cause = new Error("socket hang up");
+    const fetchMock = vi.fn().mockRejectedValue(cause);
+
+    const client = createWebPayServerClient({
+      apiSecretKey: "my-secret",
+      accessToken: "ACCESS-TOKEN",
+      fetch: fetchMock
+    });
+
+    try {
+      await client.queryOrder({ out_trade_no: "ORDER-1" });
+      throw new Error("Expected queryOrder() to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(WebPayHttpError);
+      const httpError = error as WebPayHttpError;
+      expect(httpError.status).toBe(0);
+      expect(httpError.message).toContain("socket hang up");
+      expect(httpError.response).toEqual({
+        error: "network_error",
+        message: "socket hang up"
+      });
+      expect(httpError.cause).toBe(cause);
+    }
   });
 
   it("supports subscription lifecycle helper methods", async () => {

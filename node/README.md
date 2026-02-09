@@ -132,8 +132,23 @@ console.log(valid);
 
 ## Error Types
 
-- `WebPayHttpError`: non-2xx HTTP responses
-- `WebPayApiError`: gateway response with `success: false`
+- `WebPayHttpError`: non-2xx HTTP responses (inspect `error.status`, `error.response`, `error.details`)
+- `WebPayApiError`: gateway response with `success: false` (inspect `error.response`, `error.details`, `error.code`)
+
+Example:
+
+```ts
+import { WebPayApiError, WebPayHttpError } from "webpay/server";
+
+try {
+  await client.queryOrder({ out_trade_no: "ORDER-1001" });
+} catch (error) {
+  if (error instanceof WebPayHttpError || error instanceof WebPayApiError) {
+    console.error(error.message);
+    console.error("response:", error.response);
+  }
+}
+```
 
 ## Self Spec Driving
 

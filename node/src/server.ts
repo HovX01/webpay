@@ -68,22 +68,31 @@ export const WEBPAY_SERVICES = {
 export class WebPayHttpError extends Error {
   readonly status: number;
   readonly details: unknown;
+  readonly response: unknown;
+  readonly cause?: unknown;
 
   constructor(message: string, options: WebPayHttpErrorOptions) {
     super(message);
     this.name = "WebPayHttpError";
     this.status = options.status;
     this.details = options.details;
+    this.response = options.details;
+    this.cause = options.cause;
   }
 }
 
 export class WebPayApiError extends Error {
   readonly response: WebPayApiResponse<unknown>;
+  readonly details: unknown;
+  readonly code?: string | number;
 
   constructor(message: string, response: WebPayApiResponse<unknown>) {
-    super(message);
+    const detailMessage = extractHttpErrorMessage(response);
+    super(appendDetailToMessage(message, detailMessage));
     this.name = "WebPayApiError";
     this.response = response;
+    this.details = response.data;
+    this.code = extractApiErrorCode(response);
   }
 }
 
@@ -185,6 +194,60 @@ function resolveServerClientOptions(options: WebPayServerClientInput = {}): WebP
     credentials: options.credentials ?? resolveCredentialsFromEnv(),
     fetch: options.fetch
   };
+}
+
+function extractHttpErrorMessage(details: unknown): string | undefined {
+  if (!isRecord(details)) {
+    return undefined;
+  }
+
+  const detailKeys = ["message", "error_description", "error", "detail", "msg"] as const;
+  for (const key of detailKeys) {
+    const value = details[key];
+    if (typeof value !== "string") {
+      continue;
+    }
+
+    const trimmed = value.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+
+  return undefined;
+}
+
+function extractApiErrorCode(details: unknown): string | number | undefined {
+  if (!isRecord(details)) {
+    return undefined;
+  }
+
+  const codeKeys = ["code", "error_code", "status_code"] as const;
+  for (const key of codeKeys) {
+    const value = details[key];
+    if (typeof value === "string" || typeof value === "number") {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function appendDetailToMessage(baseMessage: string, detailMessage?: string): string {
+  if (!detailMessage) {
+    return baseMessage;
+  }
+  if (baseMessage.includes(detailMessage)) {
+    return baseMessage;
+  }
+  return `${baseMessage} ${detailMessage}`;
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error && typeof error.message === "string" && error.message.trim().length > 0) {
+    return error.message.trim();
+  }
+  return String(error);
 }
 
 function isSignable(value: unknown): boolean {
@@ -335,10 +398,10 @@ export class WebPayServerClient {
       requestPayload.sign = makeSignature(requestPayload, this.apiSecretKey);
     }
 
-    const response = await this.postJson<WebPayApiResponse<TData>>("/api/mch/v2/gateway", requestPayload, accessToken);
+    const response = await this.postGatewayWithAuthRetry<TData>(requestPayload, accessToken);
 
     if (response && typeof response.success === "boolean" && !response.success) {
-      throw new WebPayApiError(response.message ?? "WebPay gateway request failed.", response as WebPayApiResponse<unknown>);
+      throw new WebPayApiError("WebPay gateway request failed.", response as WebPayApiResponse<unknown>);
     }
 
     return response;
@@ -438,6 +501,33 @@ export class WebPayServerClient {
     return auth.access_token;
   }
 
+  private async postGatewayWithAuthRetry<TData>(
+    payload: GatewayPayload,
+    accessToken: string
+  ): Promise<WebPayApiResponse<TData>> {
+    try {
+      return await this.postJson<WebPayApiResponse<TData>>("/api/mch/v2/gateway", payload, accessToken);
+    } catch (error) {
+      if (!(error instanceof WebPayHttpError) || error.status !== 401) {
+        throw error;
+      }
+
+      if (!this.credentials) {
+        throw new WebPayHttpError(
+          `${error.message} Access token is likely invalid or expired. Provide OAuth credentials via options.credentials (or WEBPAY_CLIENT_ID, WEBPAY_CLIENT_SECRET, WEBPAY_USERNAME, WEBPAY_PASSWORD) for automatic re-authentication, or refresh WEBPAY_ACCESS_TOKEN.`,
+          {
+            status: error.status,
+            details: error.response,
+            cause: error.cause
+          }
+        );
+      }
+
+      const auth = await this.authenticateWithPassword();
+      return this.postJson<WebPayApiResponse<TData>>("/api/mch/v2/gateway", payload, auth.access_token);
+    }
+  }
+
   private async postJson<T>(path: string, payload: Record<string, unknown>, accessToken?: string): Promise<T> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json"
@@ -447,15 +537,44 @@ export class WebPayServerClient {
       headers.Authorization = `Bearer ${accessToken}`;
     }
 
-    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload)
-    });
+    let response: FetchResponseLike;
+    try {
+      response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload)
+      });
+    } catch (cause) {
+      const detailMessage = toErrorMessage(cause);
+      throw new WebPayHttpError(`WebPay request failed before receiving HTTP response. ${detailMessage}`, {
+        status: 0,
+        details: {
+          error: "network_error",
+          message: detailMessage
+        },
+        cause
+      });
+    }
 
-    const data = await parseJsonResponse(response);
+    let data: unknown;
+    try {
+      data = await parseJsonResponse(response);
+    } catch (cause) {
+      const detailMessage = toErrorMessage(cause);
+      throw new WebPayHttpError(`WebPay failed to parse HTTP response. ${detailMessage}`, {
+        status: response.status,
+        details: {
+          error: "response_parse_error",
+          message: detailMessage
+        },
+        cause
+      });
+    }
+
     if (!response.ok) {
-      throw new WebPayHttpError(`WebPay request failed with status ${response.status}.`, {
+      const detailMessage = extractHttpErrorMessage(data);
+      const message = appendDetailToMessage(`WebPay request failed with status ${response.status}.`, detailMessage);
+      throw new WebPayHttpError(message, {
         status: response.status,
         details: data
       });
