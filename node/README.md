@@ -65,20 +65,19 @@ npm run test:e2e
 
 - Required:
   - `WEBPAY_API_SECRET_KEY`
-- Optional:
-  - `WEBPAY_BASE_URL` (default: `https://devwebpayment.kesspay.io`)
-  - `WEBPAY_SELLER_CODE`
-  - `WEBPAY_ACCESS_TOKEN`
-  - `WEBPAY_SIGN_TYPE` (`MD5` or `HMAC-SHA256`)
-- Optional for password OAuth auto-auth:
+- Required for OAuth authentication:
   - `WEBPAY_CLIENT_ID`
   - `WEBPAY_CLIENT_SECRET`
   - `WEBPAY_USERNAME`
   - `WEBPAY_PASSWORD`
+- Optional:
+  - `WEBPAY_BASE_URL` (default: `https://devwebpayment.kesspay.io`)
+  - `WEBPAY_SELLER_CODE`
+  - `WEBPAY_SIGN_TYPE` (`MD5` or `HMAC-SHA256`)
 
 Note: request signing (`MD5` and `HMAC-SHA256`) uses `api_secret_key`.
 The sandbox public key is for RSA encryption helpers (`encryptToHex`, `encryptObjectToHex`).
-When OAuth credentials are configured, the server client authenticates via `POST /oauth/token` first and uses the returned `access_token` for gateway routes.
+The server client authenticates via `POST /oauth/token` using `grant_type: "password"` and uses the returned `access_token` for gateway routes.
 On `401`, it re-authenticates once and retries the gateway request.
 
 ## Usage
@@ -111,7 +110,12 @@ const client = createWebPayServerClient({
   baseUrl: "https://devwebpayment.kesspay.io",
   apiSecretKey: process.env.WEBPAY_API_SECRET_KEY!,
   signType: "MD5",
-  accessToken: process.env.WEBPAY_ACCESS_TOKEN,
+  credentials: {
+    clientId: process.env.WEBPAY_CLIENT_ID!,
+    clientSecret: process.env.WEBPAY_CLIENT_SECRET!,
+    username: process.env.WEBPAY_USERNAME!,
+    password: process.env.WEBPAY_PASSWORD!
+  },
   sellerCode: process.env.WEBPAY_SELLER_CODE
 });
 ```

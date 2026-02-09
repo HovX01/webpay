@@ -184,14 +184,19 @@ function resolveServerClientOptions(options: WebPayServerClientInput = {}): WebP
   }
 
   const signType = options.signType ?? normalizeSignType(getEnvValue("WEBPAY_SIGN_TYPE")) ?? "MD5";
+  const credentials = options.credentials ?? resolveCredentialsFromEnv();
+  if (!credentials) {
+    throw new Error(
+      "Missing OAuth password credentials. Provide options.credentials or set WEBPAY_CLIENT_ID, WEBPAY_CLIENT_SECRET, WEBPAY_USERNAME, WEBPAY_PASSWORD."
+    );
+  }
 
   return {
     apiSecretKey,
     baseUrl: options.baseUrl ?? getEnvValue("WEBPAY_BASE_URL"),
     signType,
-    accessToken: options.accessToken ?? getEnvValue("WEBPAY_ACCESS_TOKEN"),
     sellerCode: options.sellerCode ?? getEnvValue("WEBPAY_SELLER_CODE"),
-    credentials: options.credentials ?? resolveCredentialsFromEnv(),
+    credentials,
     fetch: options.fetch
   };
 }
@@ -322,9 +327,8 @@ export class WebPayServerClient {
   private readonly apiSecretKey: string;
   private readonly signType: SignType;
   private readonly defaultSellerCode?: string;
-  private readonly credentials?: WebPayOAuthPasswordCredentials;
+  private readonly credentials: WebPayOAuthPasswordCredentials;
   private accessToken?: string;
-  private didAuthenticateWithPassword: boolean;
 
   constructor(options: WebPayServerClientOptions) {
     assertServerRuntime();
@@ -333,27 +337,12 @@ export class WebPayServerClient {
     this.fetchImpl = resolveFetch(options.fetch);
     this.apiSecretKey = options.apiSecretKey;
     this.signType = options.signType ?? "MD5";
-    this.accessToken = options.accessToken;
-    this.didAuthenticateWithPassword = false;
     this.defaultSellerCode = options.sellerCode;
     this.credentials = options.credentials;
   }
 
-  setAccessToken(accessToken: string): void {
-    this.accessToken = accessToken;
-    this.didAuthenticateWithPassword = false;
-  }
-
-  getAccessToken(): string | undefined {
-    return this.accessToken;
-  }
-
   async authenticateWithPassword(credentials?: WebPayOAuthPasswordCredentials): Promise<WebPayOAuthTokenResponse> {
     const payload = credentials ?? this.credentials;
-    if (!payload) {
-      throw new Error("Missing OAuth password credentials. Provide options.credentials or call authenticateWithPassword(credentials).");
-    }
-
     const response = await this.postJson<WebPayOAuthTokenResponse>("/oauth/token", {
       grant_type: "password",
       client_id: payload.clientId,
@@ -363,7 +352,6 @@ export class WebPayServerClient {
     });
 
     this.accessToken = response.access_token;
-    this.didAuthenticateWithPassword = true;
     return response;
   }
 
@@ -376,7 +364,6 @@ export class WebPayServerClient {
     });
 
     this.accessToken = response.access_token;
-    this.didAuthenticateWithPassword = true;
     return response;
   }
 
@@ -498,11 +485,6 @@ export class WebPayServerClient {
   }
 
   private async getOrAuthenticateAccessToken(): Promise<string> {
-    if (this.credentials && !this.didAuthenticateWithPassword) {
-      const auth = await this.authenticateWithPassword();
-      return auth.access_token;
-    }
-
     if (this.accessToken) {
       return this.accessToken;
     }
@@ -520,17 +502,6 @@ export class WebPayServerClient {
     } catch (error) {
       if (!(error instanceof WebPayHttpError) || error.status !== 401) {
         throw error;
-      }
-
-      if (!this.credentials) {
-        throw new WebPayHttpError(
-          `${error.message} Access token is likely invalid or expired. Provide OAuth credentials via options.credentials (or WEBPAY_CLIENT_ID, WEBPAY_CLIENT_SECRET, WEBPAY_USERNAME, WEBPAY_PASSWORD) for automatic re-authentication, or refresh WEBPAY_ACCESS_TOKEN.`,
-          {
-            status: error.status,
-            details: error.response,
-            cause: error.cause
-          }
-        );
       }
 
       const auth = await this.authenticateWithPassword();

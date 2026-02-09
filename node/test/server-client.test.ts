@@ -19,7 +19,6 @@ function mockJsonResponse(payload: unknown, status = 200) {
 
 const WEBPAY_ENV_KEYS = [
   "WEBPAY_API_SECRET_KEY",
-  "WEBPAY_ACCESS_TOKEN",
   "WEBPAY_SELLER_CODE",
   "WEBPAY_BASE_URL",
   "WEBPAY_SIGN_TYPE",
@@ -118,30 +117,50 @@ describe("WebPay signature", () => {
 });
 
 describe("WebPay server client", () => {
-  it("auto signs and sends gateway requests with bearer token", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      mockJsonResponse({
-        success: true,
-        data: { token: "order-token" }
-      })
-    );
+  it("auto signs and sends gateway requests with oauth bearer token", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          token_type: "Bearer",
+          expires_in: 1800,
+          access_token: "AUTO-TOKEN",
+          refresh_token: "REFRESH-TOKEN"
+        })
+      )
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          success: true,
+          data: { token: "order-token" }
+        })
+      );
 
     const client = createWebPayServerClient({
       apiSecretKey: "my-secret",
-      accessToken: "ACCESS-TOKEN",
       sellerCode: "SELLER-CODE",
+      credentials: {
+        clientId: "CID",
+        clientSecret: "CSECRET",
+        username: "user@example.com",
+        password: "pass123"
+      },
       fetch: fetchMock
     });
 
     const result = await client.queryOrder({ out_trade_no: "ORDER-1" });
     expect(result.success).toBe(true);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, options] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [authUrl, authOptions] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(authUrl).toBe("https://devwebpayment.kesspay.io/oauth/token");
+    const authBody = JSON.parse(authOptions.body as string) as Record<string, unknown>;
+    expect(authBody.grant_type).toBe("password");
+
+    const [url, options] = fetchMock.mock.calls[1] as [string, Record<string, unknown>];
     expect(url).toBe("https://devwebpayment.kesspay.io/api/mch/v2/gateway");
 
     const headers = options.headers as Record<string, string>;
-    expect(headers.Authorization).toBe("Bearer ACCESS-TOKEN");
+    expect(headers.Authorization).toBe("Bearer AUTO-TOKEN");
 
     const body = JSON.parse(options.body as string) as Record<string, unknown>;
     expect(body.service).toBe(WEBPAY_SERVICES.QUERY_ORDER);
@@ -149,7 +168,7 @@ describe("WebPay server client", () => {
     expect(body.sign).toBe(makeSignature(body, "my-secret"));
   });
 
-  it("authenticates with password flow when no access token is set", async () => {
+  it("authenticates with password flow and uses bearer token", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -181,15 +200,17 @@ describe("WebPay server client", () => {
     await client.listPaymentMethods();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    const [authUrl] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
+    const [authUrl, authOptions] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
     expect(authUrl).toBe("https://devwebpayment.kesspay.io/oauth/token");
+    const authBody = JSON.parse(authOptions.body as string) as Record<string, unknown>;
+    expect(authBody.grant_type).toBe("password");
 
     const [, gatewayOptions] = fetchMock.mock.calls[1] as [string, Record<string, unknown>];
     const headers = gatewayOptions.headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer AUTO-TOKEN");
   });
 
-  it("authenticates first when credentials are configured, then uses oauth token for gateway routes", async () => {
+  it("authenticates once and reuses oauth token across gateway routes", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -205,11 +226,16 @@ describe("WebPay server client", () => {
           success: true,
           data: { ok: true }
         })
+      )
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          success: true,
+          data: { ok: true }
+        })
       );
 
     const client = new WebPayServerClient({
       apiSecretKey: "my-secret",
-      accessToken: "STATIC-TOKEN",
       credentials: {
         clientId: "CID",
         clientSecret: "CSECRET",
@@ -220,12 +246,17 @@ describe("WebPay server client", () => {
     });
 
     await client.queryOrder({ out_trade_no: "ORDER-1" });
+    await client.queryOrder({ out_trade_no: "ORDER-2" });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const [authUrl] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const [authUrl, authOptions] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
     const [gatewayUrl, gatewayOptions] = fetchMock.mock.calls[1] as [string, Record<string, unknown>];
+    const [secondGatewayUrl] = fetchMock.mock.calls[2] as [string, Record<string, unknown>];
     expect(authUrl).toBe("https://devwebpayment.kesspay.io/oauth/token");
+    const authBody = JSON.parse(authOptions.body as string) as Record<string, unknown>;
+    expect(authBody.grant_type).toBe("password");
     expect(gatewayUrl).toBe("https://devwebpayment.kesspay.io/api/mch/v2/gateway");
+    expect(secondGatewayUrl).toBe("https://devwebpayment.kesspay.io/api/mch/v2/gateway");
 
     const headers = gatewayOptions.headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer AUTO-TOKEN");
@@ -267,7 +298,6 @@ describe("WebPay server client", () => {
 
     const client = new WebPayServerClient({
       apiSecretKey: "my-secret",
-      accessToken: "STALE-TOKEN",
       sellerCode: "SELLER-CODE",
       credentials: {
         clientId: "CID",
@@ -282,15 +312,19 @@ describe("WebPay server client", () => {
     expect(result.success).toBe(true);
 
     expect(fetchMock).toHaveBeenCalledTimes(4);
-    const [initialAuthUrl] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
+    const [initialAuthUrl, initialAuthOptions] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
     const [firstGatewayUrl, firstGatewayOptions] = fetchMock.mock.calls[1] as [string, Record<string, unknown>];
-    const [retryAuthUrl] = fetchMock.mock.calls[2] as [string, Record<string, unknown>];
+    const [retryAuthUrl, retryAuthOptions] = fetchMock.mock.calls[2] as [string, Record<string, unknown>];
     const [secondGatewayUrl, secondGatewayOptions] = fetchMock.mock.calls[3] as [string, Record<string, unknown>];
 
     expect(initialAuthUrl).toBe("https://devwebpayment.kesspay.io/oauth/token");
     expect(firstGatewayUrl).toBe("https://devwebpayment.kesspay.io/api/mch/v2/gateway");
     expect(retryAuthUrl).toBe("https://devwebpayment.kesspay.io/oauth/token");
     expect(secondGatewayUrl).toBe("https://devwebpayment.kesspay.io/api/mch/v2/gateway");
+    const initialAuthBody = JSON.parse(initialAuthOptions.body as string) as Record<string, unknown>;
+    const retryAuthBody = JSON.parse(retryAuthOptions.body as string) as Record<string, unknown>;
+    expect(initialAuthBody.grant_type).toBe("password");
+    expect(retryAuthBody.grant_type).toBe("password");
 
     const firstHeaders = firstGatewayOptions.headers as Record<string, string>;
     const secondHeaders = secondGatewayOptions.headers as Record<string, string>;
@@ -298,45 +332,54 @@ describe("WebPay server client", () => {
     expect(secondHeaders.Authorization).toBe("Bearer NEW-TOKEN");
   });
 
-  it("throws actionable message for 401 when credentials are not configured", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      mockJsonResponse(
-        {
-          message: "Unauthorized"
-        },
-        401
-      )
-    );
-
-    const client = createWebPayServerClient({
-      apiSecretKey: "my-secret",
-      accessToken: "STALE-TOKEN",
-      fetch: fetchMock
+  it("throws helpful error when oauth credentials are missing", () => {
+    const restore = withWebPayEnv({
+      WEBPAY_API_SECRET_KEY: "env-secret",
+      WEBPAY_CLIENT_ID: undefined,
+      WEBPAY_CLIENT_SECRET: undefined,
+      WEBPAY_USERNAME: undefined,
+      WEBPAY_PASSWORD: undefined
     });
 
-    await expect(client.queryOrder({ out_trade_no: "ORDER-1" })).rejects.toMatchObject({
-      name: "WebPayHttpError",
-      status: 401,
-      message: expect.stringContaining("Access token is likely invalid or expired.")
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    try {
+      expect(() => createWebPayServerClient({ fetch: vi.fn() })).toThrow(
+        "Missing OAuth password credentials"
+      );
+    } finally {
+      restore();
+    }
   });
 
   it("includes gateway error response payload on WebPayApiError", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      mockJsonResponse({
-        success: false,
-        code: "INVALID_SIGN",
-        message: "Invalid signature.",
-        data: {
-          request_id: "REQ-1"
-        }
-      })
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          token_type: "Bearer",
+          expires_in: 1800,
+          access_token: "AUTO-TOKEN",
+          refresh_token: "REFRESH-TOKEN"
+        })
+      )
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          success: false,
+          code: "INVALID_SIGN",
+          message: "Invalid signature.",
+          data: {
+            request_id: "REQ-1"
+          }
+        })
+      );
 
     const client = createWebPayServerClient({
       apiSecretKey: "my-secret",
-      accessToken: "ACCESS-TOKEN",
+      credentials: {
+        clientId: "CID",
+        clientSecret: "CSECRET",
+        username: "user@example.com",
+        password: "pass123"
+      },
       fetch: fetchMock
     });
 
@@ -361,11 +404,35 @@ describe("WebPay server client", () => {
       message: "Unauthorized",
       code: "AUTH_FAILED"
     };
-    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse(httpPayload, 401));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          token_type: "Bearer",
+          expires_in: 1800,
+          access_token: "AUTO-TOKEN",
+          refresh_token: "REFRESH-TOKEN"
+        })
+      )
+      .mockResolvedValueOnce(mockJsonResponse(httpPayload, 401))
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          token_type: "Bearer",
+          expires_in: 1800,
+          access_token: "RETRY-TOKEN",
+          refresh_token: "REFRESH-TOKEN"
+        })
+      )
+      .mockResolvedValueOnce(mockJsonResponse(httpPayload, 401));
 
     const client = createWebPayServerClient({
       apiSecretKey: "my-secret",
-      accessToken: "ACCESS-TOKEN",
+      credentials: {
+        clientId: "CID",
+        clientSecret: "CSECRET",
+        username: "user@example.com",
+        password: "pass123"
+      },
       fetch: fetchMock
     });
 
@@ -388,7 +455,12 @@ describe("WebPay server client", () => {
 
     const client = createWebPayServerClient({
       apiSecretKey: "my-secret",
-      accessToken: "ACCESS-TOKEN",
+      credentials: {
+        clientId: "CID",
+        clientSecret: "CSECRET",
+        username: "user@example.com",
+        password: "pass123"
+      },
       fetch: fetchMock
     });
 
@@ -411,6 +483,14 @@ describe("WebPay server client", () => {
   it("supports subscription lifecycle helper methods", async () => {
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          token_type: "Bearer",
+          expires_in: 1800,
+          access_token: "AUTO-TOKEN",
+          refresh_token: "REFRESH-TOKEN"
+        })
+      )
       .mockResolvedValue(
         mockJsonResponse({
           success: true,
@@ -420,8 +500,13 @@ describe("WebPay server client", () => {
 
     const client = createWebPayServerClient({
       apiSecretKey: "my-secret",
-      accessToken: "ACCESS-TOKEN",
       sellerCode: "SELLER-CODE",
+      credentials: {
+        clientId: "CID",
+        clientSecret: "CSECRET",
+        username: "user@example.com",
+        password: "pass123"
+      },
       fetch: fetchMock
     });
 
@@ -437,10 +522,12 @@ describe("WebPay server client", () => {
     await client.getSubscriptionTrxs({ subscription_code: "SUB-1" });
     await client.getSubscriptions();
 
-    const services = fetchMock.mock.calls.map(([, options]) => {
-      const body = JSON.parse((options.body as string) ?? "{}") as Record<string, unknown>;
-      return body.service;
-    });
+    const services = fetchMock.mock.calls
+      .map(([, options]) => {
+        const body = JSON.parse((options.body as string) ?? "{}") as Record<string, unknown>;
+        return body.service;
+      })
+      .filter((service): service is string => typeof service === "string");
 
     expect(services).toEqual([
       WEBPAY_SERVICES.GENERATE_SUBSCRIPTION_LINK,
@@ -454,23 +541,40 @@ describe("WebPay server client", () => {
   it("creates client from WEBPAY_* env vars when options are omitted", async () => {
     const restore = withWebPayEnv({
       WEBPAY_API_SECRET_KEY: "env-secret",
-      WEBPAY_ACCESS_TOKEN: "ENV-TOKEN",
-      WEBPAY_SELLER_CODE: "ENV-SELLER"
+      WEBPAY_SELLER_CODE: "ENV-SELLER",
+      WEBPAY_CLIENT_ID: "ENV-CID",
+      WEBPAY_CLIENT_SECRET: "ENV-CSECRET",
+      WEBPAY_USERNAME: "env.user@example.com",
+      WEBPAY_PASSWORD: "env-pass"
     });
 
     try {
-      const fetchMock = vi.fn().mockResolvedValue(
-        mockJsonResponse({
-          success: true,
-          data: { ok: true }
-        })
-      );
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          mockJsonResponse({
+            token_type: "Bearer",
+            expires_in: 1800,
+            access_token: "ENV-TOKEN",
+            refresh_token: "ENV-REFRESH-TOKEN"
+          })
+        )
+        .mockResolvedValueOnce(
+          mockJsonResponse({
+            success: true,
+            data: { ok: true }
+          })
+        );
 
       const client = createWebPayServerClient({ fetch: fetchMock });
       await client.queryOrder({ out_trade_no: "ORDER-ENV" });
 
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      const [, options] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const [, authOptions] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
+      const authBody = JSON.parse(authOptions.body as string) as Record<string, unknown>;
+      expect(authBody.grant_type).toBe("password");
+
+      const [, options] = fetchMock.mock.calls[1] as [string, Record<string, unknown>];
       const headers = options.headers as Record<string, string>;
       expect(headers.Authorization).toBe("Bearer ENV-TOKEN");
 
@@ -484,7 +588,10 @@ describe("WebPay server client", () => {
   it("supports createWebPayServerClient.default() alias", () => {
     const restore = withWebPayEnv({
       WEBPAY_API_SECRET_KEY: "env-secret",
-      WEBPAY_ACCESS_TOKEN: "ENV-TOKEN"
+      WEBPAY_CLIENT_ID: "ENV-CID",
+      WEBPAY_CLIENT_SECRET: "ENV-CSECRET",
+      WEBPAY_USERNAME: "env.user@example.com",
+      WEBPAY_PASSWORD: "env-pass"
     });
 
     try {

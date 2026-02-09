@@ -458,9 +458,8 @@ export interface WebPayServerClientOptions {
   apiSecretKey: string;
   baseUrl?: string;
   signType?: SignType;
-  accessToken?: string;
   sellerCode?: string;
-  credentials?: WebPayOAuthPasswordCredentials;
+  credentials: WebPayOAuthPasswordCredentials;
   fetch?: (url: string, init?: Record<string, unknown>) => Promise<{
     ok: boolean;
     status: number;
