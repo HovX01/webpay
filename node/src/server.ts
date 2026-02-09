@@ -324,6 +324,7 @@ export class WebPayServerClient {
   private readonly defaultSellerCode?: string;
   private readonly credentials?: WebPayOAuthPasswordCredentials;
   private accessToken?: string;
+  private didAuthenticateWithPassword: boolean;
 
   constructor(options: WebPayServerClientOptions) {
     assertServerRuntime();
@@ -333,12 +334,14 @@ export class WebPayServerClient {
     this.apiSecretKey = options.apiSecretKey;
     this.signType = options.signType ?? "MD5";
     this.accessToken = options.accessToken;
+    this.didAuthenticateWithPassword = false;
     this.defaultSellerCode = options.sellerCode;
     this.credentials = options.credentials;
   }
 
   setAccessToken(accessToken: string): void {
     this.accessToken = accessToken;
+    this.didAuthenticateWithPassword = false;
   }
 
   getAccessToken(): string | undefined {
@@ -360,6 +363,7 @@ export class WebPayServerClient {
     });
 
     this.accessToken = response.access_token;
+    this.didAuthenticateWithPassword = true;
     return response;
   }
 
@@ -372,6 +376,7 @@ export class WebPayServerClient {
     });
 
     this.accessToken = response.access_token;
+    this.didAuthenticateWithPassword = true;
     return response;
   }
 
@@ -493,6 +498,11 @@ export class WebPayServerClient {
   }
 
   private async getOrAuthenticateAccessToken(): Promise<string> {
+    if (this.credentials && !this.didAuthenticateWithPassword) {
+      const auth = await this.authenticateWithPassword();
+      return auth.access_token;
+    }
+
     if (this.accessToken) {
       return this.accessToken;
     }

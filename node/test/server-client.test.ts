@@ -189,9 +189,59 @@ describe("WebPay server client", () => {
     expect(headers.Authorization).toBe("Bearer AUTO-TOKEN");
   });
 
+  it("authenticates first when credentials are configured, then uses oauth token for gateway routes", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          token_type: "Bearer",
+          expires_in: 1800,
+          access_token: "AUTO-TOKEN",
+          refresh_token: "REFRESH-TOKEN"
+        })
+      )
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          success: true,
+          data: { ok: true }
+        })
+      );
+
+    const client = new WebPayServerClient({
+      apiSecretKey: "my-secret",
+      accessToken: "STATIC-TOKEN",
+      credentials: {
+        clientId: "CID",
+        clientSecret: "CSECRET",
+        username: "user@example.com",
+        password: "pass123"
+      },
+      fetch: fetchMock
+    });
+
+    await client.queryOrder({ out_trade_no: "ORDER-1" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [authUrl] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
+    const [gatewayUrl, gatewayOptions] = fetchMock.mock.calls[1] as [string, Record<string, unknown>];
+    expect(authUrl).toBe("https://devwebpayment.kesspay.io/oauth/token");
+    expect(gatewayUrl).toBe("https://devwebpayment.kesspay.io/api/mch/v2/gateway");
+
+    const headers = gatewayOptions.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer AUTO-TOKEN");
+  });
+
   it("re-authenticates and retries once when gateway responds with 401", async () => {
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          token_type: "Bearer",
+          expires_in: 1800,
+          access_token: "AUTO-TOKEN",
+          refresh_token: "REFRESH-TOKEN"
+        })
+      )
       .mockResolvedValueOnce(
         mockJsonResponse(
           {
@@ -231,18 +281,20 @@ describe("WebPay server client", () => {
     const result = await client.queryOrder({ out_trade_no: "ORDER-1" });
     expect(result.success).toBe(true);
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    const [firstUrl, firstOptions] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
-    const [authUrl] = fetchMock.mock.calls[1] as [string, Record<string, unknown>];
-    const [secondGatewayUrl, secondGatewayOptions] = fetchMock.mock.calls[2] as [string, Record<string, unknown>];
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const [initialAuthUrl] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
+    const [firstGatewayUrl, firstGatewayOptions] = fetchMock.mock.calls[1] as [string, Record<string, unknown>];
+    const [retryAuthUrl] = fetchMock.mock.calls[2] as [string, Record<string, unknown>];
+    const [secondGatewayUrl, secondGatewayOptions] = fetchMock.mock.calls[3] as [string, Record<string, unknown>];
 
-    expect(firstUrl).toBe("https://devwebpayment.kesspay.io/api/mch/v2/gateway");
-    expect(authUrl).toBe("https://devwebpayment.kesspay.io/oauth/token");
+    expect(initialAuthUrl).toBe("https://devwebpayment.kesspay.io/oauth/token");
+    expect(firstGatewayUrl).toBe("https://devwebpayment.kesspay.io/api/mch/v2/gateway");
+    expect(retryAuthUrl).toBe("https://devwebpayment.kesspay.io/oauth/token");
     expect(secondGatewayUrl).toBe("https://devwebpayment.kesspay.io/api/mch/v2/gateway");
 
-    const firstHeaders = firstOptions.headers as Record<string, string>;
+    const firstHeaders = firstGatewayOptions.headers as Record<string, string>;
     const secondHeaders = secondGatewayOptions.headers as Record<string, string>;
-    expect(firstHeaders.Authorization).toBe("Bearer STALE-TOKEN");
+    expect(firstHeaders.Authorization).toBe("Bearer AUTO-TOKEN");
     expect(secondHeaders.Authorization).toBe("Bearer NEW-TOKEN");
   });
 

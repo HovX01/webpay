@@ -78,6 +78,8 @@ npm run test:e2e
 
 Note: request signing (`MD5` and `HMAC-SHA256`) uses `api_secret_key`.
 The sandbox public key is for RSA encryption helpers (`encryptToHex`, `encryptObjectToHex`).
+When OAuth credentials are configured, the server client authenticates via `POST /oauth/token` first and uses the returned `access_token` for gateway routes.
+On `401`, it re-authenticates once and retries the gateway request.
 
 ## Usage
 
