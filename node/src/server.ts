@@ -1,6 +1,49 @@
 import { constants, createHash, createHmac, publicEncrypt } from "node:crypto";
 
-export type SignType = "MD5" | "HMAC-SHA256";
+import type {
+  GatewayPayload,
+  SignType,
+  WebPayApiResponse,
+  WebPayCancelSubscriptionRequest,
+  WebPayCloseOrderRequest,
+  WebPayDirectPayRequest,
+  WebPayDirectPayResponseData,
+  WebPayGatewayRequestByService,
+  WebPayGatewayResponseByService,
+  WebPayGeneratePaymentLinkRequest,
+  WebPayGenerateSubscriptionLinkRequest,
+  WebPayGenerateSubscriptionLinkResponseData,
+  WebPayGetSubscriptionsRequest,
+  WebPayGetSubscriptionTrxsRequest,
+  WebPayHttpErrorOptions,
+  WebPayKnownServiceName,
+  WebPayListPaymentMethodsRequest,
+  WebPayMessageResponseData,
+  WebPayNativePayRequest,
+  WebPayNativePayResponseData,
+  WebPayOAuthPasswordCredentials,
+  WebPayOAuthTokenResponse,
+  WebPayOrderInfo,
+  WebPayPaginatedData,
+  WebPayPaymentMethod,
+  WebPayQueryOrderByDateRangeRequest,
+  WebPayQueryOrderByDateRangeResponseData,
+  WebPayQueryOrderRequest,
+  WebPayQueryRefundRequest,
+  WebPayReActiveSubscriptionRequest,
+  WebPayRefundHistory,
+  WebPayRefundRequest,
+  WebPaySaveCardRequest,
+  WebPayServerClientInput,
+  WebPayServerClientOptions,
+  WebPaySubscriptionInfo,
+  WebPaySubscriptionRequest,
+  WebPaySubscriptionResponseData,
+  WebPaySubscriptionTrxInfo,
+  WebPayQuickPayRequest
+} from "./server.types";
+
+export type * from "./server.types";
 
 export const WEBPAY_SERVICES = {
   LIST_PAYMENT_METHODS: "webpay.acquire.getpaymentmethods",
@@ -21,34 +64,6 @@ export const WEBPAY_SERVICES = {
   GET_SUBSCRIPTION_TRXS: "webpay.acquire.getSubscriptionTrxs",
   GET_SUBSCRIPTIONS: "webpay.acquire.getSubscriptions"
 } as const;
-
-export interface WebPayOAuthPasswordCredentials {
-  clientId: string;
-  clientSecret: string;
-  username: string;
-  password: string;
-}
-
-export interface WebPayOAuthTokenResponse {
-  token_type: "Bearer";
-  expires_in: number | string;
-  access_token: string;
-  refresh_token: string;
-}
-
-export interface WebPayApiResponse<TData = unknown> {
-  success: boolean;
-  data: TData;
-  message?: string;
-  sign?: string;
-  sign_type?: SignType;
-  [key: string]: unknown;
-}
-
-export interface WebPayHttpErrorOptions {
-  status: number;
-  details: unknown;
-}
 
 export class WebPayHttpError extends Error {
   readonly status: number;
@@ -72,31 +87,12 @@ export class WebPayApiError extends Error {
   }
 }
 
-interface FetchResponseLike {
-  ok: boolean;
-  status: number;
-  text(): Promise<string>;
-}
-
-type FetchLike = (url: string, init?: Record<string, unknown>) => Promise<FetchResponseLike>;
-
-export interface WebPayServerClientOptions {
-  apiSecretKey: string;
-  baseUrl?: string;
-  signType?: SignType;
-  accessToken?: string;
-  sellerCode?: string;
-  credentials?: WebPayOAuthPasswordCredentials;
-  fetch?: FetchLike;
-}
-
-export type GatewayPayload = Record<string, unknown>;
-export type WebPayServerClientInput = Partial<WebPayServerClientOptions>;
+type FetchLike = NonNullable<WebPayServerClientOptions["fetch"]>;
+type FetchResponseLike = Awaited<ReturnType<FetchLike>>;
 
 export type WebPayServerClientFactory = ((options?: WebPayServerClientInput) => WebPayServerClient) & {
   default: (options?: WebPayServerClientInput) => WebPayServerClient;
 };
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -316,6 +312,11 @@ export class WebPayServerClient {
     return response;
   }
 
+  async gateway<TService extends WebPayKnownServiceName>(
+    service: TService,
+    payload: WebPayGatewayRequestByService<TService>
+  ): Promise<WebPayApiResponse<WebPayGatewayResponseByService<TService>>>;
+  async gateway<TData = unknown>(service: string, payload?: GatewayPayload): Promise<WebPayApiResponse<TData>>;
   async gateway<TData = unknown>(service: string, payload: GatewayPayload = {}): Promise<WebPayApiResponse<TData>> {
     const accessToken = await this.getOrAuthenticateAccessToken();
     const requestPayload: GatewayPayload = {
@@ -343,55 +344,81 @@ export class WebPayServerClient {
     return response;
   }
 
-  async listPaymentMethods(payload: GatewayPayload = {}): Promise<WebPayApiResponse<unknown>> {
+  async listPaymentMethods(payload: WebPayListPaymentMethodsRequest = {}): Promise<WebPayApiResponse<WebPayPaymentMethod[]>> {
     return this.gateway(WEBPAY_SERVICES.LIST_PAYMENT_METHODS, payload);
   }
 
-  async generatePaymentLink(payload: GatewayPayload): Promise<WebPayApiResponse<unknown>> {
+  async generatePaymentLink(payload: WebPayGeneratePaymentLinkRequest): Promise<WebPayApiResponse<WebPayOrderInfo>> {
     return this.gateway(WEBPAY_SERVICES.GENERATE_PAYMENT_LINK, this.withDefaultSellerCode(payload));
   }
 
-  async nativePay(payload: GatewayPayload): Promise<WebPayApiResponse<unknown>> {
+  async nativePay(payload: WebPayNativePayRequest): Promise<WebPayApiResponse<WebPayNativePayResponseData>> {
     return this.gateway(WEBPAY_SERVICES.NATIVE_PAY, this.withDefaultSellerCode(payload));
   }
 
-  async quickPay(payload: GatewayPayload): Promise<WebPayApiResponse<unknown>> {
+  async quickPay(payload: WebPayQuickPayRequest): Promise<WebPayApiResponse<WebPayOrderInfo>> {
     return this.gateway(WEBPAY_SERVICES.QUICK_PAY, this.withDefaultSellerCode(payload));
   }
 
-  async directPay(payload: GatewayPayload): Promise<WebPayApiResponse<unknown>> {
+  async directPay(payload: WebPayDirectPayRequest): Promise<WebPayApiResponse<WebPayDirectPayResponseData>> {
     return this.gateway(WEBPAY_SERVICES.DIRECT_PAY, this.withDefaultSellerCode(payload));
   }
 
-  async closeOrder(payload: GatewayPayload): Promise<WebPayApiResponse<unknown>> {
+  async closeOrder(payload: WebPayCloseOrderRequest): Promise<WebPayApiResponse<WebPayOrderInfo>> {
     return this.gateway(WEBPAY_SERVICES.CLOSE_ORDER, this.withDefaultSellerCode(payload));
   }
 
-  async queryOrder(payload: GatewayPayload): Promise<WebPayApiResponse<unknown>> {
+  async queryOrder(payload: WebPayQueryOrderRequest): Promise<WebPayApiResponse<WebPayOrderInfo>> {
     return this.gateway(WEBPAY_SERVICES.QUERY_ORDER, this.withDefaultSellerCode(payload));
   }
 
-  async queryRefund(payload: GatewayPayload): Promise<WebPayApiResponse<unknown>> {
+  async queryRefund(payload: WebPayQueryRefundRequest): Promise<WebPayApiResponse<WebPayRefundHistory>> {
     return this.gateway(WEBPAY_SERVICES.QUERY_REFUND, this.withDefaultSellerCode(payload));
   }
 
-  async queryOrderByDateRange(payload: GatewayPayload): Promise<WebPayApiResponse<unknown>> {
+  async queryOrderByDateRange(
+    payload: WebPayQueryOrderByDateRangeRequest
+  ): Promise<WebPayApiResponse<WebPayQueryOrderByDateRangeResponseData>> {
     return this.gateway(WEBPAY_SERVICES.QUERY_ORDER_BY_DATE_RANGE, this.withDefaultSellerCode(payload));
   }
 
-  async refund(payload: GatewayPayload): Promise<WebPayApiResponse<unknown>> {
+  async refund(payload: WebPayRefundRequest): Promise<WebPayApiResponse<WebPayRefundHistory>> {
     return this.gateway(WEBPAY_SERVICES.REFUND, this.withDefaultSellerCode(payload));
   }
 
-  async saveCard(payload: GatewayPayload): Promise<WebPayApiResponse<unknown>> {
+  async saveCard(payload: WebPaySaveCardRequest): Promise<WebPayApiResponse<{ link: string }>> {
     return this.gateway(WEBPAY_SERVICES.SAVE_CARD, this.withDefaultSellerCode(payload));
   }
 
-  async subscription(payload: GatewayPayload): Promise<WebPayApiResponse<unknown>> {
+  async subscription(payload: WebPaySubscriptionRequest): Promise<WebPayApiResponse<WebPaySubscriptionResponseData>> {
     return this.gateway(WEBPAY_SERVICES.SUBSCRIPTION, this.withDefaultSellerCode(payload));
   }
 
-  private withDefaultSellerCode(payload: GatewayPayload): GatewayPayload {
+  async generateSubscriptionLink(
+    payload: WebPayGenerateSubscriptionLinkRequest
+  ): Promise<WebPayApiResponse<WebPayGenerateSubscriptionLinkResponseData>> {
+    return this.gateway(WEBPAY_SERVICES.GENERATE_SUBSCRIPTION_LINK, this.withDefaultSellerCode(payload));
+  }
+
+  async cancelSubscription(payload: WebPayCancelSubscriptionRequest): Promise<WebPayApiResponse<WebPayMessageResponseData>> {
+    return this.gateway(WEBPAY_SERVICES.CANCEL_SUBSCRIPTION, this.withDefaultSellerCode(payload));
+  }
+
+  async reActiveSubscription(payload: WebPayReActiveSubscriptionRequest): Promise<WebPayApiResponse<WebPayMessageResponseData>> {
+    return this.gateway(WEBPAY_SERVICES.RE_ACTIVE_SUBSCRIPTION, this.withDefaultSellerCode(payload));
+  }
+
+  async getSubscriptionTrxs(
+    payload: WebPayGetSubscriptionTrxsRequest = {}
+  ): Promise<WebPayApiResponse<WebPayPaginatedData<WebPaySubscriptionTrxInfo>>> {
+    return this.gateway(WEBPAY_SERVICES.GET_SUBSCRIPTION_TRXS, this.withDefaultSellerCode(payload));
+  }
+
+  async getSubscriptions(payload: WebPayGetSubscriptionsRequest = {}): Promise<WebPayApiResponse<WebPayPaginatedData<WebPaySubscriptionInfo>>> {
+    return this.gateway(WEBPAY_SERVICES.GET_SUBSCRIPTIONS, this.withDefaultSellerCode(payload));
+  }
+
+  private withDefaultSellerCode<TPayload extends { seller_code?: string }>(payload: TPayload): TPayload {
     if (!this.defaultSellerCode || payload.seller_code) {
       return payload;
     }
@@ -399,7 +426,7 @@ export class WebPayServerClient {
     return {
       ...payload,
       seller_code: this.defaultSellerCode
-    };
+    } as TPayload;
   }
 
   private async getOrAuthenticateAccessToken(): Promise<string> {

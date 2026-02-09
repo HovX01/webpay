@@ -187,6 +187,49 @@ describe("WebPay server client", () => {
     expect(headers.Authorization).toBe("Bearer AUTO-TOKEN");
   });
 
+  it("supports subscription lifecycle helper methods", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        mockJsonResponse({
+          success: true,
+          data: {}
+        })
+      );
+
+    const client = createWebPayServerClient({
+      apiSecretKey: "my-secret",
+      accessToken: "ACCESS-TOKEN",
+      sellerCode: "SELLER-CODE",
+      fetch: fetchMock
+    });
+
+    await client.generateSubscriptionLink({
+      out_trade_no: "ORDER-1",
+      total_amount: 10,
+      currency: "USD",
+      interval: "daily",
+      notify_url: "https://merchant.example/notify"
+    });
+    await client.cancelSubscription({ code: "SUB-1" });
+    await client.reActiveSubscription({ subscription_code: "SUB-1" });
+    await client.getSubscriptionTrxs({ subscription_code: "SUB-1" });
+    await client.getSubscriptions();
+
+    const services = fetchMock.mock.calls.map(([, options]) => {
+      const body = JSON.parse((options.body as string) ?? "{}") as Record<string, unknown>;
+      return body.service;
+    });
+
+    expect(services).toEqual([
+      WEBPAY_SERVICES.GENERATE_SUBSCRIPTION_LINK,
+      WEBPAY_SERVICES.CANCEL_SUBSCRIPTION,
+      WEBPAY_SERVICES.RE_ACTIVE_SUBSCRIPTION,
+      WEBPAY_SERVICES.GET_SUBSCRIPTION_TRXS,
+      WEBPAY_SERVICES.GET_SUBSCRIPTIONS
+    ]);
+  });
+
   it("creates client from WEBPAY_* env vars when options are omitted", async () => {
     const restore = withWebPayEnv({
       WEBPAY_API_SECRET_KEY: "env-secret",
