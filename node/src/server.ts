@@ -301,11 +301,35 @@ function isSignable(value: unknown): boolean {
   return true;
 }
 
+function normalizeScalarForSigning(value: unknown): string | undefined {
+  if (!isSignable(value)) {
+    return undefined;
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "1" : "0";
+  }
+
+  const normalized = String(value).trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  return normalized;
+}
+
 export function toUrlParams(values: Record<string, unknown>): string {
   return Object.keys(values)
     .sort()
-    .filter((key) => key !== "sign" && isSignable(values[key]))
-    .map((key) => `${key}=${String(values[key]).trim()}`)
+    .filter((key) => key !== "sign")
+    .map((key) => {
+      const value = normalizeScalarForSigning(values[key]);
+      if (value === undefined) {
+        return undefined;
+      }
+      return `${key}=${value}`;
+    })
+    .filter((entry): entry is string => typeof entry === "string")
     .join("&");
 }
 
@@ -349,6 +373,16 @@ export function encryptToHex(plainText: string, publicKeyPem: string): string {
 
 export function encryptObjectToHex(payload: Record<string, unknown>, publicKeyPem: string): string {
   return encryptToHex(JSON.stringify(payload), publicKeyPem);
+}
+
+function normalizeGatewayPayloadBooleans(payload: GatewayPayload): GatewayPayload {
+  const normalized: GatewayPayload = {};
+
+  for (const [key, value] of Object.entries(payload)) {
+    normalized[key] = typeof value === "boolean" ? (value ? 1 : 0) : value;
+  }
+
+  return normalized;
 }
 
 function toRequiredText(value: unknown, field: string): string {
@@ -456,11 +490,11 @@ export class WebPayServerClient {
   async gateway<TData = unknown>(service: string, payload?: GatewayPayload): Promise<WebPayApiResponse<TData>>;
   async gateway<TData = unknown>(service: string, payload: GatewayPayload = {}): Promise<WebPayApiResponse<TData>> {
     const accessToken = await this.getOrAuthenticateAccessToken();
-    const requestPayload: GatewayPayload = {
+    const requestPayload = normalizeGatewayPayloadBooleans({
       service,
       sign_type: this.signType,
       ...payload
-    };
+    });
 
     if (!requestPayload.sign_type) {
       requestPayload.sign_type = this.signType;

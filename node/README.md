@@ -169,6 +169,8 @@ await client.directPay({
 
 You can also keep using `encryptDirectPayCardToHex(cardPayload, publicKeyPem)` directly when needed.
 
+For `nativePay`, boolean flags (`only_deeplink`, `is_ios_device`) are normalized to `1`/`0` before signing and sending, matching WebPay signing behavior.
+
 ## Error Types
 
 - `WebPayHttpError`: non-2xx HTTP responses (inspect `error.status`, `error.response`, `error.details`)

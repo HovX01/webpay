@@ -110,6 +110,29 @@ describe("WebPay signature", () => {
     expect(makeSignature(params, "abc123")).toBe("3577bc4baa1eb1a11e94fc22db2b12f7dbe420a80c121d9b6a1a81b391c79788");
   });
 
+  it("normalizes boolean values to 1/0 for signing", () => {
+    const params = {
+      service: "webpay.acquire.nativePay",
+      sign_type: "MD5" as const,
+      seller_code: "SELLER",
+      out_trade_no: "ORDER-1",
+      only_deeplink: true,
+      is_ios_device: false
+    };
+
+    const signedWithBooleans = makeSignature(params, "abc123");
+    const signedWithIntegers = makeSignature(
+      {
+        ...params,
+        only_deeplink: 1,
+        is_ios_device: 0
+      },
+      "abc123"
+    );
+
+    expect(signedWithBooleans).toBe(signedWithIntegers);
+  });
+
   it("verifies payload signature", () => {
     const payload: Record<string, unknown> = {
       service: "webpay.acquire.queryOrder",
@@ -323,6 +346,65 @@ describe("WebPay server client", () => {
 
     const headers = gatewayOptions.headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer AUTO-TOKEN");
+  });
+
+  it("normalizes nativePay boolean flags to 1/0 before signing and sending", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          token_type: "Bearer",
+          expires_in: 1800,
+          access_token: "AUTO-TOKEN",
+          refresh_token: "REFRESH-TOKEN"
+        })
+      )
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          success: true,
+          data: {
+            expires_in: 1800,
+            order_info: {
+              token: "ORDER-TOKEN",
+              out_trade_no: "ORDER-1",
+              body: "Native",
+              total_amount: 1,
+              currency: "USD",
+              status: "pending",
+              expired_at: "2026-01-01 00:00:00",
+              created_at: "2026-01-01 00:00:00"
+            }
+          }
+        })
+      );
+
+    const client = createWebPayServerClient({
+      apiSecretKey: "my-secret",
+      sellerCode: "SELLER-CODE",
+      credentials: {
+        clientId: "CID",
+        clientSecret: "CSECRET",
+        username: "user@example.com",
+        password: "pass123"
+      },
+      fetch: fetchMock
+    });
+
+    await client.nativePay({
+      out_trade_no: "ORDER-1",
+      body: "Native",
+      total_amount: 1,
+      currency: "USD",
+      service_code: "KESSKH",
+      only_deeplink: true,
+      is_ios_device: false
+    });
+
+    const [, options] = fetchMock.mock.calls[1] as [string, Record<string, unknown>];
+    const body = JSON.parse(options.body as string) as Record<string, unknown>;
+    expect(body.only_deeplink).toBe(1);
+    expect(body.is_ios_device).toBe(0);
+    expect(body.sign).toBe(makeSignature(body, "my-secret"));
   });
 
   it("re-authenticates and retries once when gateway responds with 401", async () => {
