@@ -6,6 +6,11 @@ This root project is for all language SDKs.
 `node/` is the current implemented package.  
 Additional SDKs will be added for PHP, Python, Java, and C#.
 
+## Official API Reference
+
+- Source documentation: `https://devwebpayment.kesspay.io/docs`
+- Documented currency support in API fields: `USD`, `KHR` (2 currencies)
+
 ## Repository Goal
 
 Provide a consistent WebPay integration experience across runtimes:

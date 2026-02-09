@@ -20,8 +20,10 @@ Before implementing or changing runtime code, define/update a short spec:
 - API surface (methods, models, errors)
 - acceptance criteria
 - compatibility and migration notes
+- external API docs reference: `https://devwebpayment.kesspay.io/docs`
 
 Keep shared contracts discoverable (recommended path: `specs/`).
+Current documented currency values in API fields are `USD` and `KHR`.
 
 ## Self Spec Driving Workflow
 
