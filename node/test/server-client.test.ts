@@ -1,3 +1,5 @@
+import { constants, generateKeyPairSync, privateDecrypt } from "node:crypto";
+
 import { describe, expect, it, vi } from "vitest";
 import {
   WEBPAY_SERVICES,
@@ -5,6 +7,7 @@ import {
   WebPayHttpError,
   WebPayServerClient,
   createWebPayServerClient,
+  encryptDirectPayCardToHex,
   makeSignature,
   verifySignature
 } from "../src/server";
@@ -113,6 +116,61 @@ describe("WebPay signature", () => {
     payload.sign = makeSignature(payload, "abc123");
     expect(verifySignature(payload, "abc123")).toBe(true);
     expect(verifySignature(payload, "wrong-secret")).toBe(false);
+  });
+});
+
+describe("WebPay encryption", () => {
+  it("encrypts direct pay card payload using documented card fields", () => {
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+
+    const encryptedHex = encryptDirectPayCardToHex(
+      {
+        number: "5473500160001018",
+        securityCode: "123",
+        expiry: {
+          month: "12",
+          year: "35"
+        }
+      },
+      publicKeyPem
+    );
+
+    const decrypted = privateDecrypt(
+      {
+        key: privateKey,
+        padding: constants.RSA_PKCS1_PADDING
+      },
+      Buffer.from(encryptedHex, "hex")
+    ).toString("utf8");
+
+    expect(JSON.parse(decrypted)).toEqual({
+      number: "5473500160001018",
+      securityCode: "123",
+      expiry: {
+        month: "12",
+        year: "35"
+      }
+    });
+  });
+
+  it("throws helpful error when required card fields are missing", () => {
+    const { publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+
+    expect(() =>
+      encryptDirectPayCardToHex(
+        {
+          number: "5473500160001018",
+          securityCode: "123",
+          expiry: {
+            month: "",
+            year: "35"
+          }
+        },
+        publicKeyPem
+      )
+    ).toThrow('Invalid direct pay card payload: "expiry.month" must be a non-empty string or number.');
   });
 });
 

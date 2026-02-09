@@ -221,6 +221,17 @@ export interface WebPayQuickPayRequest extends WebPaySellerScopedRequest, WebPay
   service_code: "WECHAT" | "ALIPAY" | (string & {});
 }
 
+export interface WebPayDirectPayCardExpiry {
+  month: string | number;
+  year: string | number;
+}
+
+export interface WebPayDirectPayCardPayload {
+  number: string | number;
+  securityCode: string | number;
+  expiry: WebPayDirectPayCardExpiry;
+}
+
 export interface WebPayDirectPayRequest extends WebPaySellerScopedRequest, WebPayTransactionRequestFields {
   card?: WebPayEncryptedHex;
   setting?: WebPaySetting;

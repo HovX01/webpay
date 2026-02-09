@@ -6,6 +6,7 @@ import type {
   WebPayApiResponse,
   WebPayCancelSubscriptionRequest,
   WebPayCloseOrderRequest,
+  WebPayDirectPayCardPayload,
   WebPayDirectPayRequest,
   WebPayDirectPayResponseData,
   WebPayGatewayRequestByService,
@@ -319,6 +320,46 @@ export function encryptToHex(plainText: string, publicKeyPem: string): string {
 
 export function encryptObjectToHex(payload: Record<string, unknown>, publicKeyPem: string): string {
   return encryptToHex(JSON.stringify(payload), publicKeyPem);
+}
+
+function toRequiredText(value: unknown, field: string): string {
+  if (typeof value !== "string" && typeof value !== "number") {
+    throw new Error(`Invalid direct pay card payload: "${field}" must be a non-empty string or number.`);
+  }
+
+  const normalized = String(value).trim();
+  if (!normalized) {
+    throw new Error(`Invalid direct pay card payload: "${field}" must be a non-empty string or number.`);
+  }
+
+  return normalized;
+}
+
+/**
+ * Encrypt direct-pay card data into the hex payload expected by `webpay.acquire.directPay`.
+ * This mirrors the card object shape documented by WebPay:
+ * { number, securityCode, expiry: { month, year } }
+ */
+export function encryptDirectPayCardToHex(card: WebPayDirectPayCardPayload, publicKeyPem: string): string {
+  if (!isRecord(card)) {
+    throw new Error("Invalid direct pay card payload: card object is required.");
+  }
+
+  const expiry = isRecord(card.expiry) ? card.expiry : undefined;
+  if (!expiry) {
+    throw new Error('Invalid direct pay card payload: "expiry" object is required.');
+  }
+
+  const normalized = {
+    number: toRequiredText(card.number, "number"),
+    securityCode: toRequiredText(card.securityCode, "securityCode"),
+    expiry: {
+      month: toRequiredText(expiry.month, "expiry.month"),
+      year: toRequiredText(expiry.year, "expiry.year")
+    }
+  };
+
+  return encryptObjectToHex(normalized, publicKeyPem);
 }
 
 export class WebPayServerClient {

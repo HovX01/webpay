@@ -136,6 +136,39 @@ const valid = verifySignature({ ...payload, sign }, process.env.WEBPAY_API_SECRE
 console.log(valid);
 ```
 
+### DirectPay card encryption helper
+
+Use the documented card shape (`number`, `securityCode`, `expiry.month`, `expiry.year`) and encrypt it to hex:
+
+```ts
+import { encryptDirectPayCardToHex } from "webpay/server";
+import fs from "node:fs";
+
+const publicKeyPem = fs.readFileSync("./sandbox-public.key", "utf8");
+
+const card = encryptDirectPayCardToHex(
+  {
+    number: "5473500160001018",
+    securityCode: "123",
+    expiry: {
+      month: "12",
+      year: "35"
+    }
+  },
+  publicKeyPem
+);
+
+await client.directPay({
+  out_trade_no: "TEST-1234567891",
+  body: "iPhone 13 pro Case",
+  total_amount: 10,
+  currency: "USD",
+  service_code: "VISA_MASTER",
+  card,
+  ip_address: "203.0.113.10"
+});
+```
+
 ## Error Types
 
 - `WebPayHttpError`: non-2xx HTTP responses (inspect `error.status`, `error.response`, `error.details`)
